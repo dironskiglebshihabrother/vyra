@@ -61,7 +61,13 @@ pub fn play(
                     totals.frames_played += stats.frames_played;
                     totals.underruns += stats.underruns;
                 }
-                let request = StreamRequest { device_id: options.device_id.clone(), mode: options.mode, spec };
+                let request = StreamRequest {
+                    device_id: options.device_id.clone(),
+                    mode: options.mode,
+                    spec,
+                    gain: 1.0,
+                    paused: false,
+                };
                 let (opened_stream, opened) = OutputStream::open(request)?;
                 renderer.set_output(opened.format.sample);
                 sample_rate = opened.format.sample_rate;

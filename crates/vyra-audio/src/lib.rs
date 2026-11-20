@@ -11,6 +11,8 @@
 
 pub mod block;
 pub mod decoder;
+#[cfg(windows)]
+pub mod engine;
 pub mod offline;
 pub mod output;
 pub mod pack;

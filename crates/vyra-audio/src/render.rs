@@ -60,9 +60,28 @@ impl Renderer {
         }
     }
 
+    /// Like [`Renderer::new`], but track numbering starts at `first_index`.
+    ///
+    /// Used when playback starts in the middle of a queue: the renderer gets the rest
+    /// of the queue and reports indexes of the whole queue.
+    pub fn starting_at(paths: impl IntoIterator<Item = PathBuf>, first_index: usize) -> Self {
+        let mut renderer = Self::new(paths);
+        renderer.opened = first_index;
+        renderer
+    }
+
     /// Adds a file to the end of the list.
     pub fn push(&mut self, path: PathBuf) {
         self.queue.push_back(path);
+    }
+
+    /// Moves the current track to the given frame. Call it right after a
+    /// [`Step::TrackStart`], before any audio of the track was taken.
+    pub fn seek(&mut self, frame: u64) -> Result<(), RenderError> {
+        match &mut self.current {
+            Some(decoder) => Ok(decoder.seek(frame)?),
+            None => Ok(()),
+        }
     }
 
     /// Tells the renderer which layout the output accepts for the format announced by

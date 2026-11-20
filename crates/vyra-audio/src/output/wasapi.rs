@@ -5,7 +5,7 @@
 //! does not allocate, lock or log while audio is running.
 
 use std::io::{ErrorKind, Read, Write};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -74,6 +74,10 @@ pub struct StreamRequest {
     pub mode: OutputMode,
     /// Format of the audio that will be written.
     pub spec: StreamSpec,
+    /// Starting volume, 0.0..=1.0. Has an effect in shared mode only.
+    pub gain: f32,
+    /// Start silent and wait for [`OutputStream::set_paused`].
+    pub paused: bool,
 }
 
 /// What was opened.
@@ -95,7 +99,6 @@ pub struct StreamStats {
     pub underruns: u64,
 }
 
-#[derive(Default)]
 struct Shared {
     stop: AtomicBool,
     finish: AtomicBool,
@@ -104,6 +107,24 @@ struct Shared {
     underruns: AtomicU64,
     failed: AtomicBool,
     error: Mutex<Option<String>>,
+    /// Volume as the bits of an `f32`. Applied to float streams only, so the direct
+    /// path of exclusive mode stays untouched.
+    gain: AtomicU32,
+}
+
+impl Shared {
+    fn new(gain: f32) -> Self {
+        Self {
+            stop: AtomicBool::new(false),
+            finish: AtomicBool::new(false),
+            paused: AtomicBool::new(false),
+            frames_played: AtomicU64::new(0),
+            underruns: AtomicU64::new(0),
+            failed: AtomicBool::new(false),
+            error: Mutex::new(None),
+            gain: AtomicU32::new(gain.to_bits()),
+        }
+    }
 }
 
 /// A running output stream. Audio written to it is played by the device thread.
@@ -118,7 +139,8 @@ impl OutputStream {
     pub fn open(request: StreamRequest) -> Result<(Self, Opened), OutputError> {
         let ring_bytes = ring_capacity(&request.spec);
         let (producer, consumer) = rtrb::RingBuffer::<u8>::new(ring_bytes);
-        let shared = Arc::new(Shared::default());
+        let shared = Arc::new(Shared::new(request.gain));
+        shared.paused.store(request.paused, Ordering::Relaxed);
         let (ready_tx, ready_rx) = mpsc::sync_channel(1);
 
         let thread_shared = Arc::clone(&shared);
@@ -151,6 +173,34 @@ impl OutputStream {
             }
         }
         Ok(())
+    }
+
+    /// Queues as much as fits right now and returns the number of bytes taken.
+    pub fn try_write(&mut self, bytes: &[u8]) -> Result<usize, OutputError> {
+        self.check()?;
+        if bytes.is_empty() {
+            return Ok(0);
+        }
+        match self.producer.write(bytes) {
+            Ok(written) => Ok(written),
+            Err(e) if e.kind() == ErrorKind::WouldBlock => Ok(0),
+            Err(e) => Err(OutputError::Backend(e.to_string())),
+        }
+    }
+
+    /// Sets the volume, 0.0..=1.0. Has an effect in shared mode only.
+    pub fn set_gain(&self, gain: f32) {
+        self.shared.gain.store(gain.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
+    }
+
+    /// Tells the stream that no more audio will come. It plays out what it has.
+    pub fn mark_finished(&self) {
+        self.shared.finish.store(true, Ordering::Release);
+    }
+
+    /// True once the stream thread has ended, after a finish, a stop or a failure.
+    pub fn has_ended(&self) -> bool {
+        self.thread.as_ref().is_none_or(JoinHandle::is_finished)
     }
 
     /// Frames handed to the device so far.
@@ -325,12 +375,16 @@ fn stream_thread(
             return;
         }
     };
-    let frame_bytes = open.opened.format.frame_bytes();
-    let buffer_frames = open.opened.buffer_frames as usize;
-    let sample_rate = open.opened.format.sample_rate;
+    let layout = StreamLayout {
+        frame_bytes: open.opened.format.frame_bytes(),
+        buffer_frames: open.opened.buffer_frames as usize,
+        sample_rate: open.opened.format.sample_rate,
+        channels: usize::from(open.opened.format.channels),
+        is_float: open.opened.format.sample == DeviceSample::F32,
+    };
     let _ = ready.send(Ok(open.opened));
 
-    if let Err(error) = run_stream(&open.client, consumer, &shared, frame_bytes, buffer_frames, sample_rate) {
+    if let Err(error) = run_stream(&open.client, consumer, &shared, layout) {
         if let Ok(mut slot) = shared.error.lock() {
             *slot = Some(error.to_string());
         }
@@ -338,17 +392,43 @@ fn stream_thread(
     }
 }
 
+#[derive(Clone, Copy)]
+struct StreamLayout {
+    frame_bytes: usize,
+    buffer_frames: usize,
+    sample_rate: u32,
+    channels: usize,
+    is_float: bool,
+}
+
+/// Scales float samples in place, moving smoothly from one volume to another so a
+/// change of the slider does not click.
+fn apply_gain(bytes: &mut [u8], channels: usize, from: f32, to: f32) {
+    let frame_bytes = channels * 4;
+    let frames = bytes.len() / frame_bytes;
+    if frames == 0 {
+        return;
+    }
+    let step = (to - from) / frames as f32;
+    for (index, frame) in bytes.chunks_exact_mut(frame_bytes).enumerate() {
+        let gain = from + step * index as f32;
+        for sample in frame.as_chunks_mut::<4>().0 {
+            *sample = (f32::from_le_bytes(*sample) * gain).to_le_bytes();
+        }
+    }
+}
+
 fn run_stream(
     client: &AudioClient,
     mut consumer: rtrb::Consumer<u8>,
     shared: &Shared,
-    frame_bytes: usize,
-    buffer_frames: usize,
-    sample_rate: u32,
+    layout: StreamLayout,
 ) -> Result<(), OutputError> {
+    let StreamLayout { frame_bytes, buffer_frames, sample_rate, channels, is_float } = layout;
     let event = client.set_get_eventhandle()?;
     let render = client.get_audiorenderclient()?;
     let mut scratch = vec![0u8; buffer_frames * frame_bytes];
+    let mut current_gain = f32::from_bits(shared.gain.load(Ordering::Relaxed));
 
     // Raise the thread to the audio class of the multimedia scheduler.
     let mut task_index = 0u32;
@@ -407,6 +487,14 @@ fn run_stream(
             }
         }
         chunk[filled..].fill(0);
+
+        if is_float && filled > 0 {
+            let target_gain = f32::from_bits(shared.gain.load(Ordering::Relaxed));
+            if current_gain != 1.0 || target_gain != 1.0 {
+                apply_gain(&mut chunk[..filled], channels, current_gain, target_gain);
+            }
+            current_gain = target_gain;
+        }
 
         if let Err(error) = render.write_to_device(chunk, None) {
             break Err(error.into());
