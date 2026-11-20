@@ -1,0 +1,12 @@
+{
+  "name": "vyra-icons",
+  "private": true,
+  "type": "module",
+  "description": "Builds the VYRA app, tray and file type icons from one vector geometry",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "devDependencies": {
+    "@resvg/resvg-js": "2.6.2"
+  }
+}
