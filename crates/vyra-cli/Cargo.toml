@@ -10,4 +10,7 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+image = { version = "0.25.10", default-features = false, features = ["png"] }
+lofty = "0.25.5"
 vyra-audio = { path = "../vyra-audio" }
+vyra-library = { version = "0.0.1", path = "../vyra-library" }

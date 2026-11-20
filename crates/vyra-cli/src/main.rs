@@ -7,6 +7,8 @@
 //! vyra-cli render --layout <i16|i24|i24in32|i32|f32> --out <file> <file or folder>...
 //! ```
 
+mod demo;
+
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -14,13 +16,16 @@ use vyra_audio::offline::render_to_vec;
 use vyra_audio::output::wasapi;
 use vyra_audio::player::{PlayEvent, PlayOptions, play};
 use vyra_audio::{DeviceSample, OutputMode, SymphoniaDecoder};
+use vyra_library::natural_key;
 
 const USAGE: &str = "\
 usage:
   vyra-cli devices
   vyra-cli info <file>...
   vyra-cli play [--exclusive] [--device <part of the name>] <file or folder>...
-  vyra-cli render --layout <i16|i24|i24in32|i32|f32> --out <file> <file or folder>...";
+  vyra-cli render --layout <i16|i24|i24in32|i32|f32> --out <file> <file or folder>...
+  vyra-cli demo-library <folder>
+  vyra-cli scan <data folder> <music folder>";
 
 const EXTENSIONS: &[&str] = &["mp3", "flac", "wav", "aiff", "aif", "m4a", "aac", "ogg", "oga"];
 
@@ -32,6 +37,11 @@ fn main() -> ExitCode {
             "info" => info(rest),
             "play" => play_command(rest),
             "render" => render_command(rest),
+            "demo-library" => match rest {
+                [dir] => demo::make(Path::new(dir)),
+                _ => Err(USAGE.to_string()),
+            },
+            "scan" => scan_command(rest),
             _ => Err(USAGE.to_string()),
         },
         None => Err(USAGE.to_string()),
@@ -119,6 +129,21 @@ fn play_command(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// Scans a music folder into the library of a data folder, the way the application does.
+fn scan_command(args: &[String]) -> Result<(), String> {
+    let [data_dir, music] = args else { return Err(USAGE.to_string()) };
+    let library_dir = Path::new(data_dir).join("library");
+    std::fs::create_dir_all(&library_dir).map_err(|e| e.to_string())?;
+    let library = vyra_library::Library::open(&library_dir).map_err(|e| e.to_string())?;
+    library.add_root(Path::new(music)).map_err(|e| e.to_string())?;
+    let summary = library.scan(&|_| {}).map_err(|e| e.to_string())?;
+    println!(
+        "tracks: {}, albums: {}, added: {}, removed: {}, unreadable: {}",
+        summary.tracks, summary.albums, summary.added, summary.removed, summary.unreadable
+    );
+    Ok(())
+}
+
 fn render_command(args: &[String]) -> Result<(), String> {
     let mut layout = None;
     let mut out = None;
@@ -183,30 +208,6 @@ fn is_audio(path: &Path) -> bool {
         .is_some_and(|e| EXTENSIONS.contains(&e.to_lowercase().as_str()))
 }
 
-/// Sort key that puts `2.mp3` before `10.mp3`.
-fn natural_key(name: &str) -> Vec<(u8, u64, String)> {
-    let mut key = Vec::new();
-    let mut chars = name.chars().peekable();
-    while let Some(&c) = chars.peek() {
-        if c.is_ascii_digit() {
-            let mut number = 0u64;
-            while let Some(&d) = chars.peek().filter(|d| d.is_ascii_digit()) {
-                number = number.saturating_mul(10).saturating_add(u64::from(d.to_digit(10).unwrap_or(0)));
-                chars.next();
-            }
-            key.push((0, number, String::new()));
-        } else {
-            let mut text = String::new();
-            while let Some(&t) = chars.peek().filter(|t| !t.is_ascii_digit()) {
-                text.extend(t.to_lowercase());
-                chars.next();
-            }
-            key.push((1, 0, text));
-        }
-    }
-    key
-}
-
 fn file_name(path: &Path) -> String {
     path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| path.display().to_string())
 }
@@ -218,7 +219,7 @@ fn format_time(frames: u64, sample_rate: u32) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::natural_key;
+    use vyra_library::natural_key;
 
     #[test]
     fn numbers_sort_by_value() {

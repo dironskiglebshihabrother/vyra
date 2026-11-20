@@ -10,12 +10,24 @@
 
 ## Status
 
-Early development. The audio engine plays files from the command line, the application window does not exist yet.
+Early development. The application opens, scans a music folder and plays it; the customization features from the plan are not built yet.
 
 - The architecture is written down in [docs/architecture](docs/architecture/README.md).
 - The audio engine core is in [crates/vyra-audio](crates/vyra-audio): decoding, a direct path that keeps samples untouched, gapless joins, exact seeking, WASAPI output in shared and exclusive modes. Tests compare the output with the source bit for bit.
+- The library in [crates/vyra-library](crates/vyra-library) scans folders, reads tags, groups tracks into albums and caches covers.
+- The application in [apps/desktop](apps/desktop) is a Tauri window with its own title bar buttons: albums, artists, tracks, search, a player with a queue and a signal path line.
 - The system icon set is built by a script in [tools/icons](tools/icons).
 - The current state of every part is listed in the [roadmap](docs/architecture/roadmap.md).
+
+<p>
+  <img src="docs/assets/screen-album.png" width="800" alt="The album page of VYRA: cover, track list, the player bar with the signal path line">
+</p>
+
+<p>
+  <img src="docs/assets/screen-now.png" width="800" alt="The now playing screen: a large cover and the signal path card that reports bit-perfect playback">
+</p>
+
+The screenshots show a demo collection with generated covers.
 
 ## What VYRA is going to be
 
@@ -92,7 +104,15 @@ Plugins, local sync, DSD and ASIO follow after 1.0.
 
 ## Building
 
-The audio engine needs Rust and the Microsoft C++ build tools:
+The application needs Rust, Node and the Microsoft C++ build tools:
+
+```
+cd apps/desktop
+npm install
+npx tauri build --no-bundle
+```
+
+The result is `target/release/vyra.exe`. The engine and the library are tested without the window:
 
 ```
 cargo test

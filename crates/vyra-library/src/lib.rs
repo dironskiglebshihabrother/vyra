@@ -9,7 +9,7 @@ use std::sync::Mutex;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
 
-pub use scan::{ScanProgress, ScanSummary};
+pub use scan::{ScanProgress, ScanSummary, is_audio, natural_key};
 
 /// File extensions the audio engine can play today.
 pub const AUDIO_EXTENSIONS: &[&str] = &["mp3", "flac", "wav", "aiff", "aif", "m4a", "aac", "ogg", "oga"];
@@ -164,6 +164,12 @@ impl Library {
             transaction.commit()?;
             Ok(())
         })
+    }
+
+    /// Reads a file that is not in the library, so it can be played straight from
+    /// Explorer. Its cover is cached like any other.
+    pub fn external_track(&self, path: &Path) -> Option<Track> {
+        scan::external(self, path)
     }
 
     /// Scans every music folder: reads new and changed files, forgets removed ones,

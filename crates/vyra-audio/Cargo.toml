@@ -20,4 +20,5 @@ windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Media_Audio
 
 [dev-dependencies]
 flacenc = "0.5.1"
+mp3lame-encoder = "0.3.0"
 tempfile = "3.27.0"

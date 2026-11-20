@@ -255,10 +255,66 @@ pub(crate) fn run(library: &Library, on_progress: &(dyn Fn(ScanProgress) + Sync)
     Ok(summary)
 }
 
-fn is_audio(path: &Path) -> bool {
+/// True when the engine can play a file with this extension.
+pub fn is_audio(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
         .is_some_and(|e| AUDIO_EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()))
+}
+
+/// Sort key that puts `2.mp3` before `10.mp3`.
+pub fn natural_key(name: &str) -> Vec<(u8, u64, String)> {
+    let mut key = Vec::new();
+    let mut chars = name.chars().peekable();
+    while let Some(&c) = chars.peek() {
+        if c.is_ascii_digit() {
+            let mut number = 0u64;
+            while let Some(&d) = chars.peek().filter(|d| d.is_ascii_digit()) {
+                number = number.saturating_mul(10).saturating_add(u64::from(d.to_digit(10).unwrap_or(0)));
+                chars.next();
+            }
+            key.push((0, number, String::new()));
+        } else {
+            let mut text = String::new();
+            while let Some(&t) = chars.peek().filter(|t| !t.is_ascii_digit()) {
+                text.extend(t.to_lowercase());
+                chars.next();
+            }
+            key.push((1, 0, text));
+        }
+    }
+    key
+}
+
+/// Builds a track for a file outside the library.
+pub(crate) fn external(library: &Library, path: &Path) -> Option<crate::Track> {
+    let metadata = std::fs::metadata(path).ok()?;
+    let found = Found { root_id: 0, path: path.to_path_buf(), size: metadata.len() as i64, mtime: 0 };
+    let parsed = parse(&found)?;
+    let artwork = artwork::find(path, Path::new(&parsed.folder))
+        .and_then(|bytes| artwork::store(library.artwork_dir(), &bytes))
+        .map(|(hash, _)| hash);
+
+    // Negative identifiers never meet the ones the database hands out.
+    let mut id_bytes = [0u8; 8];
+    id_bytes.copy_from_slice(&blake3::hash(parsed.path.as_bytes()).as_bytes()[..8]);
+    let id = -((i64::from_le_bytes(id_bytes) & ((1i64 << 52) - 1)) + 1);
+
+    Some(crate::Track {
+        id,
+        path: parsed.path,
+        title: parsed.title,
+        artist: parsed.artist.unwrap_or_default(),
+        album: parsed.album.unwrap_or_default(),
+        album_id: None,
+        disc_no: parsed.disc_no,
+        track_no: parsed.track_no,
+        duration_ms: parsed.duration_ms.max(0) as u64,
+        sample_rate: parsed.sample_rate,
+        bit_depth: parsed.bit_depth,
+        codec: parsed.codec.to_string(),
+        artwork,
+    })
 }
 
 fn non_empty(text: Option<impl AsRef<str>>) -> Option<String> {
@@ -416,7 +472,8 @@ pub(crate) fn regroup(connection: &Connection) -> Result<()> {
         let hash = blake3::hash(format!("{folder}\u{0}{album_key}").as_bytes());
         let mut id_bytes = [0u8; 8];
         id_bytes.copy_from_slice(&hash.as_bytes()[..8]);
-        let album_id = i64::from_le_bytes(id_bytes) & i64::MAX;
+        // The window handles identifiers as JavaScript numbers, which are exact up to 53 bits.
+        let album_id = i64::from_le_bytes(id_bytes) & ((1i64 << 53) - 1);
 
         let (artwork, color) = covers.get(&album_id).cloned().unwrap_or_default();
         insert.execute(sql_params![
