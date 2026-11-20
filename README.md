@@ -10,11 +10,12 @@
 
 ## Status
 
-Design stage. There is no runnable build yet.
+Early development. The audio engine plays files from the command line, the application window does not exist yet.
 
 - The architecture is written down in [docs/architecture](docs/architecture/README.md).
+- The audio engine core is in [crates/vyra-audio](crates/vyra-audio): decoding, a direct path that keeps samples untouched, gapless joins, exact seeking, WASAPI output in shared and exclusive modes. Tests compare the output with the source bit for bit.
 - The system icon set is built by a script in [tools/icons](tools/icons).
-- Twelve prototypes come next. They test the risky parts on real Windows machines before the application code starts.
+- The current state of every part is listed in the [roadmap](docs/architecture/roadmap.md).
 
 ## What VYRA is going to be
 
@@ -91,15 +92,24 @@ Plugins, local sync, DSD and ASIO follow after 1.0.
 
 ## Building
 
-Only the icon set can be built today:
+The audio engine needs Rust and the Microsoft C++ build tools:
+
+```
+cargo test
+cargo run -p vyra-cli -- devices
+cargo run -p vyra-cli -- play "D:\Music\Album"
+cargo run -p vyra-cli -- play --exclusive "D:\Music\Album"
+```
+
+`play` takes files or a folder. With `--exclusive` the device is opened in the format of the track, and the tool prints whether the path is bit-perfect.
+
+The icon set is built with Node:
 
 ```
 cd tools/icons
 npm install
 npm run build
 ```
-
-The application build will need Rust, Node and the Microsoft C++ build tools.
 
 ## License
 

@@ -2,8 +2,6 @@
 
 mod common;
 
-use std::path::PathBuf;
-
 use common::{Container, Pcm};
 use vyra_audio::offline::render_to_vec;
 use vyra_audio::{DeviceSample, RenderError, Renderer, Step};
@@ -56,7 +54,7 @@ fn a_file_that_cannot_be_opened_does_not_stop_the_list() {
     let second = Pcm::generate(16, 44_100, 2, 4_000, 9);
     let paths = [
         Container::Wav.write(&first, dir.path(), "first"),
-        PathBuf::from(dir.path().join("missing.flac")),
+        dir.path().join("missing.flac"),
         Container::Wav.write(&second, dir.path(), "second"),
     ];
 

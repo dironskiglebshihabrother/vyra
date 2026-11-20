@@ -10,13 +10,13 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-crossbeam-channel = "0.5.17"
 rtrb = "0.4.1"
 symphonia = { version = "0.6.1", features = ["mp3", "flac", "wav", "aiff", "alac", "aac", "isomp4", "ogg", "vorbis", "pcm"] }
 thiserror = "2.0.21"
 
 [target."cfg(windows)".dependencies]
 wasapi = "0.27.0"
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Media_Audio", "Win32_System_Threading"] }
 
 [dev-dependencies]
 flacenc = "0.5.1"

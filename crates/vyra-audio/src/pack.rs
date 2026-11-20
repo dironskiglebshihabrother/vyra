@@ -188,7 +188,7 @@ mod tests {
         };
         let mut out = Vec::new();
         pack(&block, DeviceSample::I16, &mut out);
-        let values: Vec<i16> = out.chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]])).collect();
+        let values: Vec<i16> = out.as_chunks::<2>().0.iter().map(|b| i16::from_le_bytes(*b)).collect();
         assert_eq!(values, [i16::MAX, i16::MIN, i16::MAX, i16::MIN]);
     }
 }

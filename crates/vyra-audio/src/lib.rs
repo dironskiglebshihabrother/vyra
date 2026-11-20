@@ -12,8 +12,11 @@
 pub mod block;
 pub mod decoder;
 pub mod offline;
+pub mod output;
 pub mod pack;
 pub mod path;
+#[cfg(windows)]
+pub mod player;
 pub mod render;
 pub mod spec;
 
